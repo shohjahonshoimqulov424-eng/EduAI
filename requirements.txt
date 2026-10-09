@@ -1,4 +1,5 @@
 gradio>=5.0
 groq
+requests
 pillow
 
