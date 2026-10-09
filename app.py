@@ -243,6 +243,7 @@ with gr.Blocks(title="EduAI", theme=gr.themes.Soft()) as app:
 
     with gr.Tab("📷 Rasmli masala"):
         uploaded_image = gr.Image(type="filepath", label="Rasm yuklang")
+        
         image_question = gr.Textbox(
             label="Savol (ixtiyoriy)",
             placeholder="Masalani yechib bering"
@@ -273,3 +274,129 @@ app.launch(
     server_name="0.0.0.0",
     server_port=int(os.environ.get("PORT", 7860))
         )
+import os
+import requests
+import gradio as gr
+from groq import Groq
+
+client = Groq(api_key=os.environ["GROQ_API_KEY"])
+
+FIREBASE_API_KEY = "AIzaSyC9Ws94kamddXsQou6u8TeJc4w5itu-QBo"
+AUTH_URL = "https://identitytoolkit.googleapis.com/v1/accounts"
+
+def firebase_auth(email, password, action):
+    endpoint = "signUp" if action == "signup" else "signInWithPassword"
+    try:
+        response = requests.post(
+            f"{AUTH_URL}:{endpoint}?key={FIREBASE_API_KEY}",
+            json={
+                "email": email,
+                "password": password,
+                "returnSecureToken": True
+            },
+            timeout=20
+        )
+        data = response.json()
+
+        if response.ok:
+            return (
+                f"✅ Muvaffaqiyatli: {data['email']}",
+                data["idToken"],
+                data["localId"]
+            )
+
+        error = data.get("error", {}).get("message", "Noma'lum xato")
+        return f"❌ Xato: {error}", None, None
+
+    except Exception:
+        return "❌ Internet yoki Firebase ulanish xatosi.", None, None
+
+def signup(email, password):
+    return firebase_auth(email, password, "signup")
+
+def login(email, password):
+    return firebase_auth(email, password, "login")
+
+def ai_answer(question, token):
+    if not token:
+        return "Avval akkauntingizga kiring."
+    if not question or not question.strip():
+        return "Savolingizni yozing."
+
+    try:
+        result = client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Sen EduAI o'quv yordamchisisan. "
+                        "O'zbek tilida sodda va tushunarli javob ber."
+                    )
+                },
+                {"role": "user", "content": question}
+            ]
+        )
+        return result.choices[0].message.content
+    except Exception as e:
+        return f"AI xatosi: {e}"
+
+def translate(text, language, token):
+    if not token:
+        return "Avval akkauntingizga kiring."
+    if not text or not text.strip():
+        return "Tarjima uchun matn kiriting."
+
+    return ai_answer(
+        f"Quyidagi matnni {language} tiliga tarjima qil. "
+        f"Faqat tarjimani chiqar:\n{text}",
+        token
+    )
+
+def solve_image(image, token):
+    if not token:
+        return "Avval akkauntingizga kiring."
+    if image is None:
+        return "Avval rasm yuklang."
+
+    try:
+        import base64
+
+        with open(image, "rb") as file:
+            encoded = base64.b64encode(file.read()).decode("utf-8")
+
+        result = client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Rasmdagi matn yoki masalani o'qib, "
+                                "o'zbek tilida bosqichma-bosqich yech."
+                            )
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encoded}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        return result.choices[0].message.content
+    except Exception as e:
+        return (
+            "Rasmni yechishda xato. Groq hisobingizda vision modeli "
+            f"mavjudligini tekshiring.\n{e}"
+        )
+
+with gr.Blocks(title="EduAI") as app:
+    gr.Markdown("# 🎓 EduAI")
+    gr.Markdown("Ro‘yxatdan o‘ting yoki akkauntingizga kiring.")
+
+    token_state = gr.State(None)
